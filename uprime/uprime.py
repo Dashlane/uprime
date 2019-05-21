@@ -7,7 +7,7 @@ class Uprime:
 
     def __init__(self, source_df, sort_column_name, occurrences_column_name, subgroup_size_column_name,
                  method='all', periods=30, sd_sensitivity=3, ignore_ooc = True, ooc_rule ='either',
-                 alert_name = None, realert_interval = 1):
+                 alert_name = None, realert_interval = 1, assumed_distribution = None):
         """
         :param source_df: Dataframe for which to create a u'-chart (A control chart for attributes data)
         :param sort_column_name: Column name in source_df that contains the chronological order of the points. Although
@@ -46,6 +46,11 @@ class Uprime:
                                     Alerts are supressed in periods 7, 8, and 9 because the interval between period 6
                                     (the first consecutive alert) and period 9 is lessthan 4.
                                     Default: 1 (this means that no alerts are suppressed.
+        :param assumed_distribution: Default is None.
+                                        Computation of sigma_z is skipped when assumed_distribution is None.
+                                        Can be None, 'binomial' or 'Poisson'.
+                                        The assumed underlying probability distribution for computing sigma_z.
+                                        sigma_z is the ratio of total process variation to within subgroup variation.
         """
         self.source_df = source_df
         self.sort_column_name = sort_column_name
@@ -58,6 +63,8 @@ class Uprime:
         self.alert_name = alert_name
         self.realert_interval = realert_interval
         self.method = method
+        self.assumed_distribution = assumed_distribution
+        self.sigma_z = None
         self.index_na_list = None
         self.chart_df = None
 
@@ -71,6 +78,7 @@ class Uprime:
         assert (self.sd_sensitivity > 0)
         assert (self.ooc_rule in ['low', 'high', 'either'])
         assert (self.method in ['all', 'rolling', 'initial'])
+        assert (self.assumed_distribution in [None, 'binomial', 'Poisson'])
 
         # Create dataframe for u'-chart calculations
         df_raw = pd.concat([
@@ -96,7 +104,15 @@ class Uprime:
         # Warn the user about dropped rows
         self.index_na_list = list(df_raw.index[~df_raw.index.isin(df.index)])
         if len(self.index_na_list) > 0:
-            logging.warning('Ignoring the following subgroups because of NA values or non-numerically-coercible values: {}'.format(self.index_na_list))
+            logging.warning(''' Ignoring the following subgroups because of NA values or non-numerically-coercible values:\n{}'''.format(self.index_na_list))
+
+        if self.assumed_distribution == 'binomial':
+            non_binomial_df = df_raw[df_raw[self.occurrences_columns_name] > df_raw['n_i']]
+            if len(non_binomial_df) > 0:
+                self.assumed_distribution = None
+                logging.warning(" assumed_distribution cannot be 'binomial' because source_df contains rows where the number of occurences is greater than the subgroup size.")
+                logging.warning(" assumed_distribution has been reset to None.")
+
 
         def control_chart_calculations(control_chart_df, periods_to_use):
             control_chart_df['u_i'] = 1.0 * control_chart_df[self.occurrences_columns_name] / control_chart_df['n_i']
@@ -106,14 +122,24 @@ class Uprime:
             control_chart_df['sd_summand_left_term'] = ((control_chart_df['n_i']) ** (0.5)) * (control_chart_df['u_i'] - ubar)
             control_chart_df['sd_summand_right_term'] = ((control_chart_df['n_iminus1']) ** (0.5)) * (control_chart_df['u_iminus1'] - ubar)
             control_chart_df['sd_summand'] = abs(control_chart_df['sd_summand_left_term'] - control_chart_df['sd_summand_right_term'])
-            sd_coeff = 1.0 / (len(control_chart_df.iloc[:periods_to_use]) - 1)
             sd_summation = control_chart_df['sd_summand'][1:periods_to_use].sum()
+            d_2 = 1.128
+            w = sd_summation / (d_2 * (len(control_chart_df.iloc[:periods_to_use]) - 1))
 
-            control_chart_df['sd'] = sd_coeff * sd_summation / (1.128 * ((control_chart_df['n_i']) ** (0.5)))
+            control_chart_df['sd'] = w / ((control_chart_df['n_i']) ** (0.5))
             control_chart_df['distance_to_control_limits'] = self.sd_sensitivity * control_chart_df['sd']
             control_chart_df['lcl'] = ubar - control_chart_df['distance_to_control_limits']
             control_chart_df['ucl'] = ubar + control_chart_df['distance_to_control_limits']
             control_chart_df['ubar'] = ubar
+
+            if self.assumed_distribution:
+                if self.assumed_distribution == 'binomial':
+                    b = (1.0 - ubar) ** (0.5)
+                elif self.assumed_distribution == 'Poisson':
+                    b = 1.0
+                self.sigma_z = w / (b * (ubar ** (0.5)))
+
+                control_chart_df['sigma_z'] = self.sigma_z
 
             # Determining whether or not the current point is outside of control limits (ooc = out of control)
             control_chart_df['ooc_low'] = control_chart_df['u_i'] < control_chart_df['lcl']
@@ -187,6 +213,9 @@ class Uprime:
                     if wip_df['ooc'].iloc[-1]:
                         ignore_index_values.append(wip_df.index[-1])
 
+            if self.assumed_distribution:
+                self.sigma_z = chart_df['sigma_z'].mean()
+
         chart_df.sort_index(inplace=True)
         chart_df['alert_name'] = self.alert_name
         chart_df['ooc_rule'] = self.ooc_rule
@@ -205,12 +234,13 @@ class Uprime:
         self.chart_df = chart_df
         return self.chart_df
 
-    def chart(self, show = False, plot_title = "u'-chart"):
+    def chart(self, show = False, plot_title = u"u\u2032-chart"):
         """
         Returns a matplotlib plot of a control chart
         This method is only supported when the data in the sort column is of a datetime-like format as recognized by
         pandas.to_datetime()
         :param show: If True then show and return figure.  If false only return figure.
+        :param plot_title: string value for the title of the plot.  Default = "u′-chart"
         :return: <class 'matplotlib.figure.Figure'> of u'-chart
         """
 
@@ -227,6 +257,17 @@ class Uprime:
 
         fig = plt.figure(figsize=(16, 8))
 
+        #Use "fake" transparent line to add sigma_z to legend
+        if self.assumed_distribution:
+            subscript_z = r'$_z$'
+            sigma_z_rounded = round(self.sigma_z, 2)
+            if self.method == 'rolling':
+                sigma_z_text = '{}{} = {}'.format(u'\u03C3\u0305', subscript_z, sigma_z_rounded)
+            else:
+                sigma_z_text = '{}{} = {}'.format(u'\u03C3', subscript_z, sigma_z_rounded)
+
+            plt.plot(self.chart_df.index, self.chart_df['ubar'], color='black', linestyle='--', alpha=0.0, label=sigma_z_text)
+
         groups = [in_control, suppress_high_low, suppress_realert, alert]
         colors = ['mediumseagreen', 'dimgray', 'coral', 'firebrick']
         labels = ['In Control', 'Hi/Lo Suppressed', 'Realert Suppressed', 'Alert (Out of Control)']
@@ -238,10 +279,9 @@ class Uprime:
         plt.plot(self.chart_df.index, self.chart_df['ucl'], color='black', label='Upper Control Limit (UCL)')
         plt.plot(self.chart_df.index, self.chart_df['ubar'], color='black', linestyle='--', label=u'u\u0305 (Mean)')
         plt.plot(self.chart_df.index, self.chart_df['lcl'], color='black', label='Lower Control Limit (LCL)')
-
         plt.xlabel(self.sort_column_name, fontsize=16)
         plt.ylabel(self.occurrences_columns_name, fontsize=16)
-        plt.legend(bbox_to_anchor=(1.01, 1))
+        plt.legend(bbox_to_anchor=(1.01, 1), loc='upper left', ncol=1)
         plt.title(plot_title, fontsize=20)
         plt.tight_layout()
         plt.grid()

@@ -1,7 +1,11 @@
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import unittest
 from uprime import Uprime
 import pandas as pd
-import os
+
 
 directory = os.path.dirname(os.path.realpath(__file__))
 relative_file_path = 'uprime_test_data.csv'
