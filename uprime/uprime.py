@@ -48,9 +48,12 @@ class Uprime:
                                     Default: 1 (this means that no alerts are suppressed.
         :param assumed_distribution: Default is None.
                                         Computation of sigma_z is skipped when assumed_distribution is None.
-                                        Can be None, 'binomial' or 'Poisson'.
+                                        Can be None, 'binomial', or 'Poisson'.
                                         The assumed underlying probability distribution for computing sigma_z.
-                                        sigma_z is the ratio of total process variation to within subgroup variation.
+                                        sigma_z is the ratio of total process variation to within-subgroup variation.
+                                        When `method = rolling`, a different sigma_z value is calculated for each row
+                                        and averaged to compute `self.sigma_z`.
+                                        Otherwise, sigma_z is the same for all rows.
         """
         self.source_df = source_df
         self.sort_column_name = sort_column_name

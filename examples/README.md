@@ -52,6 +52,16 @@ Example: If `realert_interval = 3` and there are 8 consecutive points that fall 
 up = Uprime(df, 'sort_column_name', 'occurrences_column_name', 'subgroup_size_column_name',
             ooc_rule = 'either', realert_intveral = 7, alert_name = 'your_alert_name')
 ```
+\
+Assume a 'binomial' or 'Poisson' distribution of the underlying data for the purpose of computing sigma_z (the ratio of total process variation to within-subgroup variation).\
+When 'binomial' or 'Poisson' is specified, a 'sigma_z' column will be included in the DataFrame (`self.chart_df`) returned by the `chart()` method.\
+When `method = rolling`, a different sigma_z value is calculated for each row and averaged to compute `self.sigma_z`.\
+Otherwise, sigma_z is the same for all rows.\
+(Default is None, meaning the computation will be skipped unless 'binomial' or 'Poisson' is specified)
+```python
+up = Uprime(df, 'sort_column_name', 'occurrences_column_name', 'subgroup_size_column_name',
+            assumed_distribution = 'Poisson')
+```
 
 ### Built in Charting Method
 
