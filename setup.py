@@ -7,7 +7,7 @@ README = (HERE / "README.md").read_text()
 
 setup(
     name='uprime',
-    version='1.1',
+    version='1.2',
     author="Robert Astel",
     author_email="rob.astel@gmail.com",
     license="Apache License 2.0",
